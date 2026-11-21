@@ -29,7 +29,7 @@ function save(key, value) {
 }
 
 const cfg = Object.assign(
-  { sonioxKey: '', targetLang: 'zh', diarize: true, speak: false },
+  { sonioxKey: '', targetLang: 'zh', diarize: true, speak: false, micId: '' },
   load('cfg', {})
 );
 function saveCfg() { save('cfg', cfg); }
@@ -91,6 +91,7 @@ function openSettings() {
   $('selLang').value = cfg.targetLang;
   $('chkDiarize').checked = cfg.diarize !== false;
   $('inpKey').value = '';
+  fillMicList();
   $('keyState').textContent = cfg.sonioxKey ? '✓ 已保存密钥（不需要修改就留空）' : '在 console.soniox.com 的 API Keys 页面复制';
   $('dlgSettings').showModal();
 }
@@ -98,6 +99,7 @@ function openSettings() {
 function saveSettings() {
   cfg.targetLang = $('selLang').value;
   cfg.diarize = $('chkDiarize').checked;
+  if ($('selMic')) cfg.micId = $('selMic').value;
   const key = $('inpKey').value.trim();
   if (key) cfg.sonioxKey = key;
   saveCfg();
@@ -298,13 +300,12 @@ function newAudioContext() {
 async function openMic(ctx) {
   ctx = ctx || newAudioContext();
   let stream;
-  const constraints = { audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } };
   try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    stream = await getMicStream();
   } catch {
     try {
       await sleep(800); // 有的手机上一场的麦克风还没完全释放，稍等再试一次
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await getMicStream();
     } catch {
       try { ctx.close(); } catch {}
       throw new Error('mic');
@@ -331,6 +332,57 @@ async function openMic(ctx) {
   state.audio = { ctx, stream, node };
   // 系统中途收回麦克风（比如锁屏、来电）：同传还在进行就自动重新接上
   stream.getAudioTracks().forEach(t => { t.onended = () => { if (state.running && !state.demo && state.audio?.stream === stream) recoverAudio(); }; });
+}
+
+// ---------- 选麦克风：蓝牙耳机的麦克风只收得到佩戴者的声音，开会时要用手机自带的 ----------
+const BT_RE = /bluetooth|蓝牙|headset|耳机|buds|airpods|hands-?free|sco|hfp/i;
+const AUDIO_OPTS = { echoCancellation: true, noiseSuppression: true, channelCount: 1 };
+
+async function listMics() {
+  try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); }
+  catch { return []; }
+}
+
+async function getMicStream() {
+  const open = deviceId => navigator.mediaDevices.getUserMedia({
+    audio: deviceId ? { ...AUDIO_OPTS, deviceId: { exact: deviceId } } : AUDIO_OPTS,
+  });
+  // 用户在设置里指定了
+  if (cfg.micId) {
+    try { return await open(cfg.micId); } catch { /* 设备不在了，退回自动 */ }
+  }
+  let stream = await open(null);
+  const label = stream.getAudioTracks()[0]?.label || '';
+  if (BT_RE.test(label)) {
+    // 拿到的是蓝牙耳机麦克风：换成手机自带的
+    const builtIn = (await listMics()).find(d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications' && !BT_RE.test(d.label));
+    if (builtIn) {
+      stream.getTracks().forEach(t => t.stop());
+      try { stream = await open(builtIn.deviceId); toast('🎙 已改用手机麦克风收音（耳机只用来听）'); }
+      catch { stream = await open(null); }
+    } else {
+      toast('⚠️ 正在用耳机麦克风收音，可能听不到对方。可在 ⚙ 设置里换麦克风，或先断开耳机');
+    }
+  }
+  return stream;
+}
+
+async function fillMicList() {
+  const sel = $('selMic');
+  if (!sel) return;
+  const mics = await listMics();
+  sel.innerHTML = '<option value="">自动（优先用手机自带麦克风）</option>';
+  mics.forEach((d, i) => {
+    if (!d.deviceId || d.deviceId === 'default') return;
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.textContent = (d.label || `麦克风 ${i + 1}`) + (BT_RE.test(d.label) ? '（耳机）' : '');
+    sel.appendChild(o);
+  });
+  sel.value = mics.some(d => d.deviceId === cfg.micId) ? cfg.micId : '';
+  if (mics.length && !mics[0].label) {
+    sel.insertAdjacentHTML('beforeend', '<option disabled>（先点一次「开始」允许麦克风，才能看到名字）</option>');
+  }
 }
 
 function cleanupAudio() {
@@ -766,7 +818,7 @@ function updateTimer() {
   if (d) d.maxPeak = Math.max(d.maxPeak || 0, d.peak);
   if (el && !state.demo) {
     const bars = d.peak < 1 ? '▁' : d.peak < 5 ? '▂' : d.peak < 15 ? '▄' : d.peak < 40 ? '▆' : '█';
-    el.textContent = `🎙${bars} ${Math.round(d.peak)}% · 发出 ${d.sent} · 收到 ${d.msgs}/${d.words}词 · ${state.ws ? '已连接' : '未连接'} · ${state.audio?.ctx?.state || '-'}`;
+    el.textContent = `🎙${bars} ${Math.round(d.peak)}% · 发出 ${d.sent} · 收到 ${d.msgs}/${d.words}词 · ${state.ws ? '已连接' : '未连接'} · ${state.audio?.ctx?.state || '-'} · ${(state.audio?.stream.getAudioTracks()[0]?.label || '').slice(0, 24)}`;
   } else if (el) el.textContent = '';
   $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }

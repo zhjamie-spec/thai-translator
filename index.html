@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 
@@ -72,6 +72,10 @@
       <option value="en">English</option>
     </select>
   </label>
+  <label>收音用哪个麦克风
+    <select id="selMic"><option value="">自动（优先用手机自带麦克风）</option></select>
+    <small>戴蓝牙耳机时，耳机麦克风只听得见你自己，听不到对方，所以默认用手机麦克风。</small>
+  </label>
   <label class="row">
     <input type="checkbox" id="chkDiarize" checked>
     <span>区分说话人（单人讲话时可关掉，避免误分）</span>
@@ -101,6 +105,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
