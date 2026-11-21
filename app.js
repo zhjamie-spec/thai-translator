@@ -42,7 +42,7 @@ const state = {
   utterances: [],       // 屏幕上的句子（带 el）
   speakerNames: {},
   startTime: 0, timerHandle: null, rotateHandle: null,
-  uttSeq: 0, fatalError: null, audioChunks: 0,
+  uttSeq: 0, fatalError: null, audioChunks: 0, gen: 0, watchHandle: null,
 };
 
 // ---------- 初始化 ----------
@@ -143,6 +143,8 @@ async function start() {
   unlockAudio();
   // 必须在点按的当下创建并启动声音处理，否则安卓 Chrome 会让它“静音挂起”，Soniox 收不到声音
   const ctx = newAudioContext();
+  closeSoniox();
+  cleanupAudio();
   setStatus('connecting', '连接中…');
   try {
     await openMic(ctx);
@@ -158,6 +160,7 @@ async function start() {
 }
 
 function beginSession(isDemo) {
+  state.gen++;
   state.running = true;
   state.demo = isDemo;
   state.startTime = Date.now();
@@ -175,7 +178,8 @@ function beginSession(isDemo) {
   if (!isDemo) {
     // 5 秒后检查：麦克风到底有没有声音送出去
     state.audioChunks = 0;
-    setTimeout(() => {
+    clearTimeout(state.watchHandle);
+    state.watchHandle = setTimeout(() => {
       if (!state.running || state.demo || state.audioChunks > 0) return;
       const st = state.audio?.ctx?.state;
       state.audio?.ctx?.resume?.().catch(() => {});
@@ -190,6 +194,10 @@ async function stop() {
   state.running = false;
   clearInterval(state.timerHandle);
   clearTimeout(state.rotateHandle);
+  clearTimeout(state.watchHandle);
+  state.fatalError = null;
+  reconnecting = false;
+  recoveringAudio = false;
   closeSoniox();
   cleanupAudio();
   releaseWakeLock();
@@ -282,13 +290,17 @@ function newAudioContext() {
 async function openMic(ctx) {
   ctx = ctx || newAudioContext();
   let stream;
+  const constraints = { audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } };
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-    });
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
   } catch {
-    try { ctx.close(); } catch {}
-    throw new Error('mic');
+    try {
+      await sleep(800); // 有的手机上一场的麦克风还没完全释放，稍等再试一次
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch {
+      try { ctx.close(); } catch {}
+      throw new Error('mic');
+    }
   }
   await ctx.audioWorklet.addModule('pcm-worklet.js');
   const src = ctx.createMediaStreamSource(stream);
@@ -305,7 +317,7 @@ async function openMic(ctx) {
   if (ctx.state !== 'running') await ctx.resume().catch(() => {});
   state.audio = { ctx, stream, node };
   // 系统中途收回麦克风（比如锁屏、来电）：同传还在进行就自动重新接上
-  stream.getAudioTracks().forEach(t => { t.onended = () => { if (state.running && !state.demo) recoverAudio(); }; });
+  stream.getAudioTracks().forEach(t => { t.onended = () => { if (state.running && !state.demo && state.audio?.stream === stream) recoverAudio(); }; });
 }
 
 function cleanupAudio() {
@@ -338,6 +350,7 @@ function openSoniox() {
       resolve();
     };
     ws.onmessage = (e) => {
+      if (state.ws !== ws) return; // 旧连接的消息，不要混进新对话
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.error_code) {
@@ -349,6 +362,7 @@ function openSoniox() {
     };
     ws.onerror = () => { if (!opened) reject(new Error('无法连接 Soniox，请检查网络')); };
     ws.onclose = () => {
+      if (opened && state.ws !== ws) return; // 已经换了新连接，旧的关掉不用管
       if (state.ws === ws) state.ws = null;
       if (state.fatalError && state.running) {
         const code = state.fatalError;
@@ -374,6 +388,7 @@ function closeSoniox() {
   if (state.ws) {
     const ws = state.ws;
     state.ws = null;
+    ws.onclose = null; ws.onmessage = null; ws.onerror = null;
     try { ws.send(''); } catch {}
     setTimeout(() => { try { ws.close(); } catch {} }, 1500);
   }
@@ -818,7 +833,8 @@ async function reconnectSoniox() {
   reconnecting = true;
   setStatus('connecting', '重连中…');
   let delay = 1000;
-  while (state.running && !state.ws) {
+  const gen = state.gen;
+  while (state.running && !state.ws && state.gen === gen) {
     await sleep(delay);
     if (!state.running || state.ws) break;
     try {
@@ -829,6 +845,7 @@ async function reconnectSoniox() {
     }
   }
   reconnecting = false;
+  if (state.running && state.ws && state.gen === gen) setStatus('recording', '同传中');
 }
 
 // ---------- 暗屏：全黑像熄屏，同传照常 ----------
