@@ -42,7 +42,7 @@ const state = {
   utterances: [],       // 屏幕上的句子（带 el）
   speakerNames: {},
   startTime: 0, timerHandle: null, rotateHandle: null,
-  uttSeq: 0, fatalError: null, audioChunks: 0, gen: 0, watchHandle: null,
+  uttSeq: 0, fatalError: null, audioChunks: 0, gen: 0, diag: { sent: 0, peak: 0, msgs: 0, words: 0 }, watchHandle: null,
 };
 
 // ---------- 初始化 ----------
@@ -179,12 +179,20 @@ function beginSession(isDemo) {
     // 5 秒后检查：麦克风到底有没有声音送出去
     state.audioChunks = 0;
     clearTimeout(state.watchHandle);
+    state.diag = { sent: 0, peak: 0, msgs: 0, words: 0, maxPeak: 0 };
     state.watchHandle = setTimeout(() => {
-      if (!state.running || state.demo || state.audioChunks > 0) return;
-      const st = state.audio?.ctx?.state;
-      state.audio?.ctx?.resume?.().catch(() => {});
-      toast(`⚠️ 麦克风没有声音进来（${st || '无'}）。请点「结束」再点「开始」；还不行请截图给我`);
-    }, 5000);
+      if (!state.running || state.demo) return;
+      const d = state.diag;
+      if (state.audioChunks === 0) {
+        const st = state.audio?.ctx?.state;
+        state.audio?.ctx?.resume?.().catch(() => {});
+        toast(`⚠️ 麦克风没有声音进来（${st || '无'}）。请点「结束」再点「开始」；还不行请截图给我`);
+      } else if (d.maxPeak < 1) {
+        toast('⚠️ 麦克风收到的是静音。如果连着蓝牙耳机，可能用的是耳机的麦克风；请先断开耳机再试');
+      } else if (d.sent === 0) {
+        toast('⚠️ 声音没能送到翻译服务，请检查网络');
+      }
+    }, 8000);
   }
   if (!isDemo) state.rotateHandle = setTimeout(rotateSession, SESSION_ROTATE_MS);
 }
@@ -307,7 +315,12 @@ async function openMic(ctx) {
   const node = new AudioWorkletNode(ctx, 'pcm-worklet');
   node.port.onmessage = (e) => {
     state.audioChunks++;
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(e.data);
+    // 记录音量（诊断用）：取这一包里最大的振幅
+    const pcm = new Int16Array(e.data);
+    let pk = 0;
+    for (let i = 0; i < pcm.length; i += 4) { const v = Math.abs(pcm[i]); if (v > pk) pk = v; }
+    state.diag.peak = Math.max(state.diag.peak * 0.85, pk / 327.68);
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) { state.ws.send(e.data); state.diag.sent++; }
   };
   src.connect(node);
   // 接一个静音输出，确保手机浏览器真的在运行这条声音处理线路
@@ -353,6 +366,8 @@ function openSoniox() {
       if (state.ws !== ws) return; // 旧连接的消息，不要混进新对话
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
+      state.diag.msgs++;
+      if (msg.tokens) state.diag.words += msg.tokens.filter(t => t.text && t.text.trim() && t.text[0] !== '<').length;
       if (msg.error_code) {
         if ([401, 402, 403].includes(msg.error_code)) { state.fatalError = msg.error_code; return; }
         toast(`识别服务出错 (${msg.error_code}): ${msg.error_message || ''}`);
@@ -747,6 +762,12 @@ function setStatus(cls, text) {
 
 function updateTimer() {
   const s = Math.floor((Date.now() - state.startTime) / 1000);
+  const d = state.diag, el = $('diag');
+  if (d) d.maxPeak = Math.max(d.maxPeak || 0, d.peak);
+  if (el && !state.demo) {
+    const bars = d.peak < 1 ? '▁' : d.peak < 5 ? '▂' : d.peak < 15 ? '▄' : d.peak < 40 ? '▆' : '█';
+    el.textContent = `🎙${bars} ${Math.round(d.peak)}% · 发出 ${d.sent} · 收到 ${d.msgs}/${d.words}词 · ${state.ws ? '已连接' : '未连接'} · ${state.audio?.ctx?.state || '-'}`;
+  } else if (el) el.textContent = '';
   $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 

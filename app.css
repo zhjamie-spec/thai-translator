@@ -148,3 +148,5 @@ summary { font-size: 14px; cursor: pointer; }
 
 /* 隐藏的按钮真正隐藏（side-btn 的 display:flex 会盖掉 hidden） */
 [hidden] { display: none !important; }
+
+.diag { font-weight: 400; color: var(--ink-soft); font-size: 11px; margin-left: 6px; }
