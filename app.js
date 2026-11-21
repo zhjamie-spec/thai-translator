@@ -50,6 +50,8 @@ const state = {
   $('btnStart').onclick = start;
   $('btnStop').onclick = stop;
   $('btnDemo').onclick = runDemo;
+  $('btnDim').onclick = showDim;
+  $('dim').onclick = hideDim;
   $('btnSpeak').onclick = toggleSpeak;
   $('btnSettings').onclick = openSettings;
   $('btnCloseSettings').onclick = () => $('dlgSettings').close();
@@ -152,7 +154,8 @@ function beginSession(isDemo) {
   $('empty')?.remove();
   $('btnStart').hidden = true;
   $('btnStop').hidden = false;
-  $('btnDemo').disabled = true;
+  $('btnDemo').hidden = true;
+  $('btnDim').hidden = false;
   $('timer').hidden = false;
   live.hidden = false;
   setStatus('recording', isDemo ? '演示中' : '同传中');
@@ -174,7 +177,9 @@ async function stop() {
   setStatus('idle', '已结束');
   $('btnStart').hidden = false;
   $('btnStop').hidden = true;
-  $('btnDemo').disabled = false;
+  $('btnDemo').hidden = false;
+  $('btnDim').hidden = true;
+  hideDim();
   live.hidden = true;
   liveOrig.textContent = '';
   liveTrans.textContent = '';
@@ -265,6 +270,8 @@ async function openMic() {
   };
   src.connect(node);
   state.audio = { ctx, stream, node };
+  // 系统中途收回麦克风（比如锁屏、来电）：同传还在进行就自动重新接上
+  stream.getAudioTracks().forEach(t => { t.onended = () => { if (state.running && !state.demo) recoverAudio(); }; });
 }
 
 function cleanupAudio() {
@@ -324,14 +331,7 @@ function openSoniox() {
         return;
       }
       // 意外断线（比如网络切换）：自动重连
-      if (state.running && !state.demo) {
-        setStatus('connecting', '重连中…');
-        setTimeout(() => {
-          if (!state.running) return;
-          openSoniox().then(() => setStatus('recording', '同传中'))
-            .catch(() => toast('网络断开，重连失败。请检查网络后点「结束」再重新开始'));
-        }, 1000);
-      }
+      if (state.running && !state.demo) reconnectSoniox();
     };
   });
 }
@@ -350,12 +350,8 @@ async function rotateSession() {
   const old = state.ws;
   state.ws = null;
   try { if (old) { old.onclose = null; old.send(''); setTimeout(() => old.close(), 2000); } } catch {}
-  try {
-    await openSoniox();
-    state.rotateHandle = setTimeout(rotateSession, SESSION_ROTATE_MS);
-  } catch {
-    setTimeout(rotateSession, 5000);
-  }
+  state.rotateHandle = setTimeout(rotateSession, SESSION_ROTATE_MS);
+  await reconnectSoniox(); // 与断线重连共用同一套逻辑，避免同时开两条连接
 }
 
 // ---------- 处理识别结果（与电脑版相同的逻辑）----------
@@ -414,6 +410,7 @@ function flushCurrent() {
     state.session.utterances.push({ speaker: u.speaker, lang: u.lang, original: u.original, translation: u.translation });
     persistCurrent();
   }
+  if (!$('dim').hidden) $('dimText').textContent = u.translation || u.original;
   speakUtterance(u);
 }
 
@@ -717,18 +714,89 @@ function toast(text) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ---------- 防熄屏 + 熄屏后自动恢复 ----------
 let wakeLock = null;
+let wakeWarned = false;
+
 async function acquireWakeLock() {
-  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
-  document.addEventListener('visibilitychange', reacquireWakeLock);
+  document.addEventListener('visibilitychange', onVisibility);
+  await requestWakeLock();
 }
-async function reacquireWakeLock() {
-  if (state.running && document.visibilityState === 'visible') {
-    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+
+async function requestWakeLock() {
+  try {
+    if (!navigator.wakeLock) throw new Error('unsupported');
+    wakeLock = await navigator.wakeLock.request('screen');
+  } catch {
+    // 手机不允许网页保持常亮：明确告诉用户，而不是默默熄屏
+    if (!wakeWarned && document.visibilityState === 'visible') {
+      wakeWarned = true;
+      toast('⚠️ 手机没允许保持常亮：请把手机"自动锁屏"时间调长，开会时可用 🌙 暗屏');
+    }
   }
 }
+
+// 屏幕重新点亮 / 切回 App 时：重新申请常亮，并检查收音和连接是否还活着
+async function onVisibility() {
+  if (document.visibilityState !== 'visible' || !state.running) return;
+  await requestWakeLock();
+  checkHealth();
+}
+
+function checkHealth() {
+  if (!state.running || state.demo) return;
+  const a = state.audio;
+  const micDead = !a || a.stream.getAudioTracks().every(t => t.readyState === 'ended');
+  if (micDead) recoverAudio();
+  else if (a.ctx.state === 'suspended') a.ctx.resume().catch(() => {});
+  if (!state.ws) reconnectSoniox();
+}
+
 function releaseWakeLock() {
-  document.removeEventListener('visibilitychange', reacquireWakeLock);
+  document.removeEventListener('visibilitychange', onVisibility);
   try { wakeLock?.release(); } catch {}
   wakeLock = null;
 }
+
+// 麦克风被系统收回后重新打开
+let recoveringAudio = false;
+async function recoverAudio() {
+  if (recoveringAudio || !state.running) return;
+  recoveringAudio = true;
+  try {
+    cleanupAudio();
+    await openMic();
+    toast('🎙 已恢复收音');
+  } catch {
+    toast('⚠️ 麦克风被系统收回了，点亮屏幕后会自动再试');
+  }
+  recoveringAudio = false;
+}
+
+// 断网或连接中断：一直重试，直到连上或用户点结束（开会时网络可能短暂掉线）
+let reconnecting = false;
+async function reconnectSoniox() {
+  if (reconnecting) return;
+  reconnecting = true;
+  setStatus('connecting', '重连中…');
+  let delay = 1000;
+  while (state.running && !state.ws) {
+    await sleep(delay);
+    if (!state.running || state.ws) break;
+    try {
+      await openSoniox();
+      setStatus('recording', '同传中');
+    } catch {
+      delay = Math.min(delay * 2, 10000);
+    }
+  }
+  reconnecting = false;
+}
+
+// ---------- 暗屏：全黑像熄屏，同传照常 ----------
+function showDim() {
+  const last = state.utterances[state.utterances.length - 1];
+  $('dimText').textContent = last ? (last.translation || last.original) : '';
+  $('dim').hidden = false;
+}
+function hideDim() { $('dim').hidden = true; }

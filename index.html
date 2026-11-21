@@ -50,7 +50,14 @@
   <button id="btnStart" class="main-btn">▶ 开始</button>
   <button id="btnStop" class="main-btn stop" hidden>■ 结束</button>
   <button id="btnDemo" class="side-btn" title="看一段模拟效果">▷<span>演示</span></button>
+  <button id="btnDim" class="side-btn" title="黑屏省电，同传继续" hidden>🌙<span>暗屏</span></button>
 </nav>
+
+<!-- 暗屏：屏幕全黑像熄屏，同传照常进行；轻点任意处恢复 -->
+<div id="dim" class="dim" hidden>
+  <div class="dim-hint">暗屏中 · 同传继续 · 轻点屏幕恢复</div>
+  <div id="dimText" class="dim-text"></div>
+</div>
 
 <!-- 设置 -->
 <dialog id="dlgSettings">

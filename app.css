@@ -130,6 +130,15 @@ summary { font-size: 14px; cursor: pointer; }
 .sync-ok { color: var(--green); }
 .sync-wait { color: var(--accent); }
 
+.dim {
+  position: fixed; inset: 0; z-index: 200; background: #000;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: calc(40px + env(safe-area-inset-top)) 22px calc(40px + env(safe-area-inset-bottom));
+}
+.dim[hidden] { display: none; }
+.dim-hint { color: #3a3a3a; font-size: 12px; text-align: center; }
+.dim-text { color: #4a4a4a; font-size: 17px; line-height: 1.6; }
+
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(90px + env(safe-area-inset-bottom));

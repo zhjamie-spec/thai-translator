@@ -1,5 +1,5 @@
 // 离线缓存：让桌面图标打开更快；有网时总是先取最新版本
-const CACHE = 'thai-translator-v1';
+const CACHE = 'thai-translator-v2';
 const FILES = ['./', 'index.html', 'app.css', 'app.js', 'pcm-worklet.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
