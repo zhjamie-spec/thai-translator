@@ -54,7 +54,7 @@ window.addEventListener('unhandledrejection', e => toast('出错了：' + (e.rea
 function on(id, fn) { const el = $(id); if (el) el.onclick = fn; }
 function show(id, visible) { const el = $(id); if (el) el.hidden = !visible; }
 
-(function init() {
+function init() {
   on('btnStart', start);
   on('btnStop', stop);
   on('btnDemo', runDemo);
@@ -79,7 +79,7 @@ function show(id, visible) { const el = $(id); if (el) el.hidden = !visible; }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-})();
+}
 
 function updateEmptyHint() {
   const el = $('emptyHint');
@@ -813,3 +813,6 @@ function showDim() {
   show('dim', true);
 }
 function hideDim() { show('dim', false); }
+
+// 放在文件最后再启动：保证所有变量都已准备好
+init();
