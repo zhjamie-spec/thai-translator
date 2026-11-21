@@ -46,18 +46,26 @@ const state = {
 };
 
 // ---------- 初始化 ----------
+// 出错时直接在屏幕上提示，而不是“点了没反应”
+window.addEventListener('error', e => toast('出错了：' + (e.message || '未知错误') + '（请关掉 App 重新打开）'));
+window.addEventListener('unhandledrejection', e => toast('出错了：' + (e.reason?.message || e.reason || '未知错误')));
+
+// 元素不存在时（新旧版本混用）也不崩
+function on(id, fn) { const el = $(id); if (el) el.onclick = fn; }
+function show(id, visible) { const el = $(id); if (el) el.hidden = !visible; }
+
 (function init() {
-  $('btnStart').onclick = start;
-  $('btnStop').onclick = stop;
-  $('btnDemo').onclick = runDemo;
-  $('btnDim').onclick = showDim;
-  $('dim').onclick = hideDim;
-  $('btnSpeak').onclick = toggleSpeak;
-  $('btnSettings').onclick = openSettings;
-  $('btnCloseSettings').onclick = () => $('dlgSettings').close();
-  $('btnSaveSettings').onclick = saveSettings;
-  $('btnHistory').onclick = openHistory;
-  $('btnCloseHistory').onclick = () => $('dlgHistory').close();
+  on('btnStart', start);
+  on('btnStop', stop);
+  on('btnDemo', runDemo);
+  on('btnDim', showDim);
+  on('dim', hideDim);
+  on('btnSpeak', toggleSpeak);
+  on('btnSettings', openSettings);
+  on('btnCloseSettings', () => $('dlgSettings').close());
+  on('btnSaveSettings', saveSettings);
+  on('btnHistory', openHistory);
+  on('btnCloseHistory', () => $('dlgHistory').close());
   updateSpeakButton();
   updateEmptyHint();
 
@@ -136,14 +144,15 @@ async function start() {
   setStatus('connecting', '连接中…');
   try {
     await openMic();
-    await openSoniox();
+    await withTimeout(openSoniox(), 15000, '连接超时，请检查网络');
+    beginSession(false);
   } catch (e) {
+    state.running = false;
+    closeSoniox();
     setStatus('idle', '未开始');
     cleanupAudio();
     toast(e.message === 'mic' ? '无法使用麦克风：请在浏览器设置里允许这个网页使用麦克风' : '连接失败：' + e.message);
-    return;
   }
-  beginSession(false);
 }
 
 function beginSession(isDemo) {
@@ -152,11 +161,11 @@ function beginSession(isDemo) {
   state.startTime = Date.now();
   if (!state.session) newSessionRecord();
   $('empty')?.remove();
-  $('btnStart').hidden = true;
-  $('btnStop').hidden = false;
-  $('btnDemo').hidden = true;
-  $('btnDim').hidden = false;
-  $('timer').hidden = false;
+  show('btnStart', false);
+  show('btnStop', true);
+  show('btnDemo', false);
+  show('btnDim', true);
+  show('timer', true);
   live.hidden = false;
   setStatus('recording', isDemo ? '演示中' : '同传中');
   state.timerHandle = setInterval(updateTimer, 1000);
@@ -175,10 +184,10 @@ async function stop() {
   stopSpeaking();
   flushCurrent();
   setStatus('idle', '已结束');
-  $('btnStart').hidden = false;
-  $('btnStop').hidden = true;
-  $('btnDemo').hidden = false;
-  $('btnDim').hidden = true;
+  show('btnStart', true);
+  show('btnStop', false);
+  show('btnDemo', true);
+  show('btnDim', false);
   hideDim();
   live.hidden = true;
   liveOrig.textContent = '';
@@ -410,7 +419,7 @@ function flushCurrent() {
     state.session.utterances.push({ speaker: u.speaker, lang: u.lang, original: u.original, translation: u.translation });
     persistCurrent();
   }
-  if (!$('dim').hidden) $('dimText').textContent = u.translation || u.original;
+  if ($('dim') && !$('dim').hidden && $('dimText')) $('dimText').textContent = u.translation || u.original;
   speakUtterance(u);
 }
 
@@ -712,6 +721,10 @@ function toast(text) {
   toastHandle = setTimeout(() => el.remove(), 3500);
 }
 
+function withTimeout(p, ms, msg) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---------- 防熄屏 + 熄屏后自动恢复 ----------
@@ -796,7 +809,7 @@ async function reconnectSoniox() {
 // ---------- 暗屏：全黑像熄屏，同传照常 ----------
 function showDim() {
   const last = state.utterances[state.utterances.length - 1];
-  $('dimText').textContent = last ? (last.translation || last.original) : '';
-  $('dim').hidden = false;
+  if ($('dimText')) $('dimText').textContent = last ? (last.translation || last.original) : '';
+  show('dim', true);
 }
-function hideDim() { $('dim').hidden = true; }
+function hideDim() { show('dim', false); }
