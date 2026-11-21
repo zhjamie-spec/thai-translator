@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#c2410c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>泰语同传</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="logo">译</span>
+    <div>
+      <h1>泰语同传</h1>
+      <div class="status-row">
+        <span id="status" class="status idle"><i></i><b>未开始</b></span>
+        <span id="timer" class="timer" hidden>00:00</span>
+      </div>
+    </div>
+  </div>
+  <div class="head-btns">
+    <button id="btnHistory" class="icon-btn" title="历史记录">🗂</button>
+    <button id="btnSettings" class="icon-btn" title="设置">⚙</button>
+  </div>
+</header>
+
+<main id="feed" class="feed">
+  <div id="empty" class="empty">
+    <p class="big">🎙️</p>
+    <p>点下面的「开始」，对方说泰语、英语或中文，<br>这里会实时显示翻译。</p>
+    <p class="hint" id="emptyHint"></p>
+  </div>
+</main>
+
+<div id="live" class="live" hidden>
+  <div class="live-label">正在听…</div>
+  <div id="liveOriginal" class="live-original"></div>
+  <div id="liveTranslation" class="live-translation"></div>
+</div>
+
+<nav class="bottom-bar">
+  <button id="btnSpeak" class="side-btn" title="朗读译文">🔇<span>朗读</span></button>
+  <button id="btnStart" class="main-btn">▶ 开始</button>
+  <button id="btnStop" class="main-btn stop" hidden>■ 结束</button>
+  <button id="btnDemo" class="side-btn" title="看一段模拟效果">▷<span>演示</span></button>
+</nav>
+
+<!-- 设置 -->
+<dialog id="dlgSettings">
+  <h2>设置</h2>
+  <label>Soniox API 密钥
+    <input type="password" id="inpKey" placeholder="粘贴密钥（只保存在这台手机上）" autocomplete="off">
+    <small id="keyState"></small>
+  </label>
+  <label>翻译成
+    <select id="selLang">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+  </label>
+  <label class="row">
+    <input type="checkbox" id="chkDiarize" checked>
+    <span>区分说话人（单人讲话时可关掉，避免误分）</span>
+  </label>
+  <div class="dlg-actions">
+    <button id="btnSaveSettings" class="primary">保存</button>
+    <button id="btnCloseSettings">取消</button>
+  </div>
+</dialog>
+
+<!-- 历史 -->
+<dialog id="dlgHistory">
+  <h2>历史记录</h2>
+  <div id="historyList" class="history-list"></div>
+  <div class="dlg-actions">
+    <button id="btnCloseHistory">关闭</button>
+  </div>
+</dialog>
+
+<!-- 询问 -->
+<dialog id="dlgAsk">
+  <h2 id="askTitle"></h2>
+  <p id="askText" class="ask-text"></p>
+  <div class="dlg-actions">
+    <button id="askYes" class="primary"></button>
+    <button id="askNo"></button>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
