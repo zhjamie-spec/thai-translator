@@ -42,7 +42,7 @@ const state = {
   utterances: [],       // 屏幕上的句子（带 el）
   speakerNames: {},
   startTime: 0, timerHandle: null, rotateHandle: null,
-  uttSeq: 0, fatalError: null,
+  uttSeq: 0, fatalError: null, audioChunks: 0,
 };
 
 // ---------- 初始化 ----------
@@ -141,9 +141,11 @@ async function start() {
   }
   // 朗读需要在用户点按时“解锁”一次声音（手机浏览器的限制）
   unlockAudio();
+  // 必须在点按的当下创建并启动声音处理，否则安卓 Chrome 会让它“静音挂起”，Soniox 收不到声音
+  const ctx = newAudioContext();
   setStatus('connecting', '连接中…');
   try {
-    await openMic();
+    await openMic(ctx);
     await withTimeout(openSoniox(), 15000, '连接超时，请检查网络');
     beginSession(false);
   } catch (e) {
@@ -170,6 +172,16 @@ function beginSession(isDemo) {
   setStatus('recording', isDemo ? '演示中' : '同传中');
   state.timerHandle = setInterval(updateTimer, 1000);
   acquireWakeLock();
+  if (!isDemo) {
+    // 5 秒后检查：麦克风到底有没有声音送出去
+    state.audioChunks = 0;
+    setTimeout(() => {
+      if (!state.running || state.demo || state.audioChunks > 0) return;
+      const st = state.audio?.ctx?.state;
+      state.audio?.ctx?.resume?.().catch(() => {});
+      toast(`⚠️ 麦克风没有声音进来（${st || '无'}）。请点「结束」再点「开始」；还不行请截图给我`);
+    }, 5000);
+  }
   if (!isDemo) state.rotateHandle = setTimeout(rotateSession, SESSION_ROTATE_MS);
 }
 
@@ -261,23 +273,36 @@ function restoreSession(s) {
 }
 
 // ---------- 麦克风 ----------
-async function openMic() {
+function newAudioContext() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume().catch(() => {});
+  return ctx;
+}
+
+async function openMic(ctx) {
+  ctx = ctx || newAudioContext();
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
     });
   } catch {
+    try { ctx.close(); } catch {}
     throw new Error('mic');
   }
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.audioWorklet.addModule('pcm-worklet.js');
   const src = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, 'pcm-worklet');
   node.port.onmessage = (e) => {
+    state.audioChunks++;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(e.data);
   };
   src.connect(node);
+  // 接一个静音输出，确保手机浏览器真的在运行这条声音处理线路
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  node.connect(mute).connect(ctx.destination);
+  if (ctx.state !== 'running') await ctx.resume().catch(() => {});
   state.audio = { ctx, stream, node };
   // 系统中途收回麦克风（比如锁屏、来电）：同传还在进行就自动重新接上
   stream.getAudioTracks().forEach(t => { t.onended = () => { if (state.running && !state.demo) recoverAudio(); }; });
