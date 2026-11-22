@@ -814,11 +814,13 @@ function setStatus(cls, text) {
 
 function updateTimer() {
   const s = Math.floor((Date.now() - state.startTime) / 1000);
+  if (s % 20 === 0 && (!wakeLock || wakeLock.released) && document.visibilityState === 'visible') requestWakeLock();
   const d = state.diag, el = $('diag');
   if (d) d.maxPeak = Math.max(d.maxPeak || 0, d.peak);
   if (el && !state.demo) {
     const bars = d.peak < 1 ? '▁' : d.peak < 5 ? '▂' : d.peak < 15 ? '▄' : d.peak < 40 ? '▆' : '█';
-    el.textContent = `🎙${bars} ${Math.round(d.peak)}% · 发出 ${d.sent} · 收到 ${d.msgs}/${d.words}词 · ${state.ws ? '已连接' : '未连接'} · ${state.audio?.ctx?.state || '-'} · ${(state.audio?.stream.getAudioTracks()[0]?.label || '').slice(0, 24)}`;
+    const awake = wakeLock && !wakeLock.released ? '☀️常亮' : '⚠️未常亮';
+    el.textContent = `${awake} · 🎙${bars} ${Math.round(d.peak)}% · 发出 ${d.sent} · 收到 ${d.msgs}/${d.words}词 · ${state.ws ? '已连接' : '未连接'} · ${state.audio?.ctx?.state || '-'} · ${(state.audio?.stream.getAudioTracks()[0]?.label || '').slice(0, 24)}`;
   } else if (el) el.textContent = '';
   $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -852,8 +854,14 @@ async function acquireWakeLock() {
 async function requestWakeLock() {
   try {
     if (!navigator.wakeLock) throw new Error('unsupported');
+    if (wakeLock && !wakeLock.released) return;
     wakeLock = await navigator.wakeLock.request('screen');
+    // 系统中途收回常亮（比如省电策略）：同传还在进行就马上再要回来
+    wakeLock.addEventListener('release', () => {
+      if (state.running && document.visibilityState === 'visible') setTimeout(requestWakeLock, 500);
+    });
   } catch {
+    wakeLock = null;
     // 手机不允许网页保持常亮：明确告诉用户，而不是默默熄屏
     if (!wakeWarned && document.visibilityState === 'visible') {
       wakeWarned = true;
